@@ -45,6 +45,8 @@ the output projections of attention and MLP blocks.
   singular values of the head (one huge value is the shared component; a long flat tail is normal).
 
 Weight reading gives hypotheses only. Two similar rows can still be separated by the layers below.
+In practice the pair with the most similar rows is often not the pair the model confuses: check the
+real confusions in Step 3 before you edit anything.
 
 ## Step 3: read the activations (the decision gate)
 
@@ -83,7 +85,9 @@ Pick the smallest edit that matches the diagnosis. Write each to a new directory
 
 a. **Head refit with a pull** (information present, head blocks it):
    `probe_refit.py FEATURES.pt MODEL_DIR --write OUT_DIR` fits on all search groups and writes the
-   new head. Raise `--pull` until the relative head change is small (a few percent).
+   new head. Pass `--only A,B` to move only the rows of the faulty classes and freeze the rest: a full
+   refit tends to trade one class for another (it fits the search set's class mix), and a frozen row
+   cannot get worse. Raise `--pull` until the change is small.
 b. **Bias shift**: add a constant to one class's bias. The baseline every other edit must beat.
 c. **Direction ablation** (a behaviour written along `v`):
    `scripts/ablate_direction.py MODEL_DIR DIRECTION.pt --tensor NAME [--tensor NAME] --out OUT_DIR`
