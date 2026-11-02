@@ -1,0 +1,9 @@
+[project]
+name = "weight-surgery"
+version = "0.1.0"
+description = "Open agent skill: find a fault in a network's weights and activations, fix it with a small closed-form edit, prove it on held-out data."
+requires-python = ">=3.10"
+dependencies = ["torch", "safetensors"]
+
+[project.optional-dependencies]
+examples = ["transformers", "huggingface_hub", "pandas", "pyarrow"]

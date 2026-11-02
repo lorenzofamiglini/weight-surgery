@@ -1,6 +1,6 @@
 ---
 name: weight-surgery
-description: Diagnose a fault in a trained neural network by reading its weights and activations, then fix it with a small numerical edit (no gradient training) and prove the fix on held-out data. Use when a model has a specific, repeatable failure (looping, two labels confused, a class never predicted, a behaviour that should be absent) and you can load its weights and run forward passes. Not for adding an ability the model lacks.
+description: Diagnose a fault in a trained neural network by reading its weights and activations, then fix it with a small numerical edit (no gradient training) and prove the fix on held-out data. Use when a model has a specific, repeatable failure (looping, two labels confused, a class never predicted, a behaviour that should be absent) and you can load its weights and run forward passes. Also audits what changed between two checkpoints of one network. Not for adding an ability the model lacks.
 ---
 
 # Weight surgery
@@ -114,6 +114,20 @@ its own interval. If several edits were tried, say how many: the evaluation set 
 One paragraph each: the failure and its rate; what the weights showed; what the activations showed
 (present or absent); the edit, its size and the search-set sweep; the evaluation numbers with intervals;
 what did not work.
+
+## Audit mode: what changed between two checkpoints
+
+Use it after a fine-tune, a continued run or a merge, or to tell two fine-tunes apart.
+
+1. `scripts/diff_checkpoints.py A_DIR B_DIR` gives the relative change per tensor and per layer, and,
+   for each matrix, the share of the change in its top singular direction. A share near 1 on a few
+   matrices is a targeted change, worth reading. A small share everywhere is ordinary training drift.
+   Tensors that were added or reshaped (a new head) are listed apart; read them with `head_geometry.py`.
+2. Weights alone often cannot say what a change does. Run both checkpoints on a few texts you write
+   for the question (an honest and a flattering answer, a date of a wedding and of a surgery), and
+   compare the internal vectors or attention of the layers that changed most. A small behavioural probe
+   on top of the weights is what decides the question.
+3. Report: where the change is (layers, matrices), how concentrated it is, and what the probe showed.
 
 ## Credit
 
