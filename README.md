@@ -33,12 +33,15 @@ test, scored once):
 | System | Method | Micro-F1 | Δ [95% CI] |
 |---|---|---|---|
 | Original | | 0.479 | |
-| MISC off (one bias per MISC tag) | weight surgery: an edit by hand | 0.501 | +0.023 [+0.021, +0.025] |
+| MISC off | bias edit by hand | 0.501 | +0.023 [+0.021, +0.025] |
+| **MISC rows labelled ORG** | **edit by hand, 20 forward passes, no number changed** | **0.510** | **+0.032 [+0.029, +0.034]** |
 | Head refit on 10,000 sentences | fitted control: gradient steps on the head | 0.588 | +0.109 [+0.102, +0.116] |
 
-The hand edit is small and certain. The fitted head shows that the information is in the network and
-how far a fitted head goes; it is fine-tuning of the head, not the post's method. An earlier version of
-this README called it a weight edit with no training. That was wrong: the head was trained.
+The weights alone named no fault (a regular-simplex head, no neuron above chance). Twenty passes
+showed a label mismatch: WikiANN calls songs, leagues and shows ORG, the model calls them MISC. The hand
+edit fixes that and nothing else. The rest of the gap is span conventions, which need training: the
+fitted head shows how far that goes, and it is fine-tuning, not the post's method. An earlier version
+of this README called the fitted head a weight edit with no training. That was wrong.
 
 ## The procedure
 
