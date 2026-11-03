@@ -1,102 +1,76 @@
 ---
 name: weight-surgery
-description: Diagnose a fault in a trained neural network by reading its weights and activations, then fix it with a small numerical edit (no gradient training) and prove the fix on held-out data. Use when a model has a specific, repeatable failure (looping, two labels confused, a class never predicted, a behaviour that should be absent) and you can load its weights and run forward passes. Also audits what changed between two checkpoints of one network. Not for adding an ability the model lacks.
+description: Diagnose a fault in a trained neural network by reading its weights, then fix it with a small edit written by reasoning (no optimizer, no gradient descent, a small budget of forward passes) and prove the fix on held-out data. Use when a model has a specific, repeatable failure (looping, two labels confused, a class never predicted, a behaviour that should be absent) and you can load its weights. Also audits what changed between two checkpoints of one network. Not for adding an ability the model lacks.
 ---
 
 # Weight surgery
 
 A model is a set of matrices. Many faults are written in a few directions of a few of them. This skill
-finds those directions with measurements, removes or moves them with a closed-form edit, and accepts
-the edit only if held-out numbers say so.
+reads the matrices to find those directions, writes an edit by hand, and accepts it only if held-out
+numbers say so. It follows the method of the post credited at the end.
 
 The rule that decides everything: **an edit can uncover an ability that something hides; it cannot
-create an ability the model does not have.** Step 3 tests which case you are in before you edit.
+create an ability the model does not have.**
 
-## Ground rules
+## Ground rules (from the post)
 
-1. Split the data before you start: a **search** set (look, measure, fit edits) and an **evaluation**
-   set (look only at the final numbers, once per candidate edit). Never fit, choose or tune on the
-   evaluation set. Split by source (file, user, document), not by row.
-2. Count forward passes. Write the budget down before you start and report what you used.
-3. Never overwrite the original weights. Write every edit to a new directory with a note of what changed.
-4. Compare every edit against the cheap baselines: threshold or bias tuning, and more training data.
-   An edit that ties a bias tweak is not worth its risk.
-5. Report failures too. "The information is not in the activations" is a result.
+1. **The weights are the main object.** Read them first: rows, columns, products of matrices. Running
+   the model is the scarce resource, not the default.
+2. **A forward-pass budget, written down before you start** (the post used 0 to 50; one pass is one
+   batch). Count every pass and report the count.
+3. **No optimizer.** No gradient descent, no fitting to data. Every edit is a closed form you write and
+   can explain: subtract a direction, scale or zero some neurons, change a bias, set a row by a formula.
+4. **The evaluation set stays unseen** until the end: not for search, not for choosing a strength.
+   Split by source (file, user, document), not by row.
+5. Never overwrite the original weights. Write every edit to a new directory with a note.
+6. Compare against the cheap baselines (a bias change, more training data) and report failures.
+   "There is nothing to remove" is a result: the post's control model ended there.
 
-## Step 1: name the failure and measure it
+## Step 1: name the failure
 
-Write one sentence: *on inputs X the model does Y instead of Z*. Measure how often on the search set,
-and keep 20 to 50 failing and passing examples. A fault that is a rate (e.g. 93% of answers hit the
-token limit, or 37% of tokens of label A are predicted as B) is a good target. A vague "it is worse"
-is not.
+One sentence: *on inputs X the model does Y instead of Z*. Measure its rate with a few passes on the
+search set. A rate (93% of answers hit the token limit; 37% of label A predicted as B) is a good target.
 
-## Step 2: read the weights (cheap, no data)
+## Step 2: read the weights (no forward pass)
 
-Start with the matrices whose rows or columns have a meaning: the output head, the unembedding,
-the output projections of attention and MLP blocks.
+- `scripts/head_geometry.py MODEL_DIR [OTHER_DIR ...]` — for a classification head: one direction per
+  class, the shared component removed, centred cosine between every pair, norms, biases, singular
+  values. Look for **initialisation fingerprints** (classes warm-started from one row that training
+  did not separate) and for rows that are exact copies.
+- `scripts/weight_votes.py MODEL_DIR --pair A,B [--norm FINAL_NORM] [--embedding NAME]` — push the
+  head's A-against-B direction back through every matrix that writes into the residual stream. Each
+  neuron gets a vote for A or for B; each matrix gets the share of its weight along the direction;
+  each vocabulary token gets a score. This names the neurons and layers to suspect.
+- Products of matrices answer questions about circuits without running the model (the post found
+  copying heads this way): for a head, `W_O W_V` says what it writes for what it reads, and
+  `W_Q^T W_K` what it looks for.
 
-- `scripts/head_geometry.py MODEL_DIR [OTHER_DIR ...]` — for a classification head: one direction
-  per class (mean of its tag rows minus the null row), the shared "is a span" component removed,
-  then centred cosine between every pair. Classes near 0 use different directions; +0.5 and above use
-  nearly the same one. Pass several checkpoints to see whether training moved them apart.
-- Look for **initialisation fingerprints**: classes that were warm-started from the same row and that
-  training did not separate. They show as high centred cosine exactly on the pairs that shared a source.
-- Look at norms and biases per class (a class with a much lower bias is under-predicted) and at the
-  singular values of the head (one huge value is the shared component; a long flat tail is normal).
+Weight reading gives hypotheses only. The pair with the most similar rows is often not the pair the
+model confuses.
 
-Weight reading gives hypotheses only. Two similar rows can still be separated by the layers below.
-In practice the pair with the most similar rows is often not the pair the model confuses: check the
-real confusions in Step 3 before you edit anything.
+## Step 3: test the hypothesis with a few passes
 
-## Step 3: read the activations (the decision gate)
+Spend the budget on inputs that split the hypothesis: minimal pairs you write (*the wedding on 3 May*
+against *the surgery on 3 May*), and failing and passing examples from the search set.
 
-Collect the vectors that feed the suspect matrix, on the search set, with the gold label (or a pass/fail
-flag) and a source id per vector. Save them as a `.pt` file:
-`{"hidden": float[N, d], "gold": long[N], "groups": list[str]}` (or `"flag"` instead of `"gold"`).
+- Check that the suspect neurons fire on the failures and not on the passes.
+- `scripts/find_direction.py FEATURES.pt` gives the difference of the class means of failing and
+  passing vectors (a measurement, not a fit) and its held-out AUC. Run it per layer: the layer where
+  AUC jumps writes the behaviour. AUC near 0.5 everywhere means no single direction: do not ablate.
 
-```python
-out = model(**batch, output_hidden_states=True)
-hidden = out.hidden_states[layer][0][keep]   # last layer for a head; any layer for a direction
-```
+## Step 4: edit by hand
 
-Then ask whether the information is present:
+Write each edit to a new directory. Report how many weights changed and what fraction of the model
+that is.
 
-- `scripts/probe_refit.py FEATURES.pt MODEL_DIR` refits only the head on half the groups (pulled
-  towards the old head by an L2 term), scores the other half, swaps, and prints per-class precision,
-  recall, F1 and top confusions for the old and the refit head.
-  - Refit clearly better on the faulty classes → the information is there and the head blocks it.
-    Edit the head (Step 5a).
-  - Refit no better → the layers below do not separate the classes. Stop editing. The fix is data or
-    training. Write that down.
-- `scripts/find_direction.py FEATURES.pt` for a pass/fail flag: difference of class means, and the
-  held-out-by-group AUC of the projection on it. Run it per layer; the layer where AUC jumps is where
-  the behaviour is written. AUC near 0.5 everywhere → no single direction; do not ablate.
+- **Direction removal** (a behaviour written along `v`, the post's fix for looping):
+  `scripts/ablate_direction.py MODEL_DIR DIRECTION.pt --tensor NAME [--tensor NAME] --out OUT_DIR`
+  applies `W ← W − s · v (vᵀ W)` to the K columns with the largest `|vᵀ W[:, j]|` (`--columns K`).
+  Choose `s` and K by reasoning, then check a few values within the budget.
+- **Neuron scaling**: scale the columns of the neurons Step 2 named and Step 3 confirmed.
+- **Bias change**: add a constant to one class's bias. The baseline every other edit must beat.
 
-## Step 4: locate the writers
-
-For a direction `v` found at layer `L`, score every matrix that writes into the residual stream before
-`L` (attention output, MLP down projection) by `‖vᵀ W‖`, and every column `j` by `|vᵀ W[:, j]|`.
-A fault written by a few matrices and a few columns is a good candidate for a small edit. A fault
-spread thinly everywhere is not.
-
-## Step 5: edit
-
-Pick the smallest edit that matches the diagnosis. Write each to a new directory.
-
-a. **Head refit with a pull** (information present, head blocks it):
-   `probe_refit.py FEATURES.pt MODEL_DIR --write OUT_DIR` fits on all search groups and writes the
-   new head. Pass `--only A,B` to move only the rows of the faulty classes and freeze the rest: a full
-   refit tends to trade one class for another (it fits the search set's class mix), and a frozen row
-   cannot get worse. Raise `--pull` until the change is small.
-b. **Bias shift**: add a constant to one class's bias. The baseline every other edit must beat.
-c. **Direction ablation** (a behaviour written along `v`):
-   `scripts/ablate_direction.py MODEL_DIR DIRECTION.pt --tensor NAME [--tensor NAME] --out OUT_DIR`
-   applies `W ← W − s · v (vᵀ W)` to the columns with the largest `|vᵀ W[:, j]|` (`--columns K`,
-   default all) with strength `s` (`--scale`). Sweep `s` in {0.25, 0.5, 1} on the search set.
-
-The edit's size is a result: report how many weights changed and what fraction of the model that is.
-
-## Step 6: evaluate once
+## Step 5: evaluate once
 
 Run the original and each surviving edit on the evaluation set. Report:
 
@@ -107,32 +81,35 @@ Run the original and each surviving edit on the evaluation set. Report:
 - the forward passes used and the number of weights changed.
 
 Accept the edit only if the interval of the target excludes zero and nothing else gets worse beyond
-its own interval. If several edits were tried, say how many: the evaluation set is now less clean.
+its own interval. Say how many edits were tried.
 
-## Step 7: write it up
+## Step 6: write it up
 
-One paragraph each: the failure and its rate; what the weights showed; what the activations showed
-(present or absent); the edit, its size and the search-set sweep; the evaluation numbers with intervals;
-what did not work.
+One paragraph each: the failure and its rate; what the weights showed; what the passes confirmed; the
+edit and its size; the evaluation numbers with intervals; what did not work.
 
 ## Audit mode: what changed between two checkpoints
 
-Use it after a fine-tune, a continued run or a merge, or to tell two fine-tunes apart.
-
 1. `scripts/diff_checkpoints.py A_DIR B_DIR` gives the relative change per tensor and per layer, and,
    for each matrix, the share of the change in its top singular direction. A share near 1 on a few
-   matrices is a targeted change, worth reading. A small share everywhere is ordinary training drift.
-   Tensors that were added or reshaped (a new head) are listed apart; read them with `head_geometry.py`.
-2. Weights alone often cannot say what a change does. Run both checkpoints on a few texts you write
-   for the question (an honest and a flattering answer, a date of a wedding and of a surgery), and
-   compare the internal vectors or attention of the layers that changed most. A small behavioural probe
-   on top of the weights is what decides the question.
-3. Report: where the change is (layers, matrices), how concentrated it is, and what the probe showed.
+   matrices is a targeted change, worth reading. Added or reshaped tensors are listed apart.
+2. Weights alone often cannot say what a change does: the post's agent failed on weights alone and
+   succeeded with attention patterns on 16 texts it wrote. Do the same: a few texts written for the
+   question, both checkpoints, the internals of the layers that changed most.
+3. Report where the change is, how concentrated it is, and what the probe showed.
+
+## A fitted control (outside the post's method)
+
+`scripts/probe_refit.py FEATURES.pt MODEL_DIR` refits the head with gradient steps on half the
+groups and scores the other half. It answers one question: is the information in the vectors that feed
+the head? Use it as a control when Step 3 is unclear. Its `--write` output is a fine-tuned head, not
+weight surgery: if you ship it, call it fine-tuning.
 
 ## Credit
 
-The approach follows Takehi, Teoh, Zhang and Khattab (2026), *Sparks of Weight-Space Programming:
+The method follows Takehi, Teoh, Zhang and Khattab (2026), *Sparks of Weight-Space Programming:
 LLMs can natively read & write neural network weights*,
-https://rikiyat.github.io/blog/weight-space-programming/ — an agent removed a looping direction from
-two MLP layers of Qwen3.5-0.8B (0.016% of the weights) and raised MATH-500 from 7.9% to 48.1%, and
-could not improve a model that did not loop.
+https://rikiyat.github.io/blog/weight-space-programming/ — with a budget of 50 forward passes and no
+gradient descent, an agent removed a looping direction from 64 output columns of two MLP layers of
+Qwen3.5-0.8B (0.016% of the weights) and raised MATH-500 from 7.9% to 48.1%, and could not improve a
+model that did not loop.

@@ -1,7 +1,7 @@
 # Worked example: a news NER model on Wikipedia
 
 `dslim/bert-base-NER` (BERT base, 108M weights) was trained on CoNLL-2003 news. On WikiANN English it
-loses most of its accuracy. Can a weight edit, and no training of the network, recover some of it?
+loses most of its accuracy. How much can an edit by hand recover, and how much is left for training?
 
 Search set: WikiANN validation (10,000 sentences). Evaluation set: WikiANN test (10,000 sentences),
 scored once per system at the end. Groups for the bootstrap: blocks of 20 sentences (WikiANN has no
@@ -12,9 +12,9 @@ documents). CPU only.
 Entity-level micro-F1 0.489. ORG recall is low (3,230 of 4,677 missed), LOC has 3,834 false positives,
 and the model predicts 1,900 MISC entities on a dataset that has no MISC class.
 
-## Step 3: the decision gate
+## A fitted control
 
-`probe_refit.py` refits only the head on half the groups and scores the other half (word level):
+`probe_refit.py` (gradient steps, outside the post's method) refits only the head on half the groups and scores the other half (word level):
 
 | Class | Old head F1 | Refit head F1 |
 |---|---|---|
@@ -26,7 +26,7 @@ and the model predicts 1,900 MISC entities on a dataset that has no MISC class.
 The vectors that feed the head already separate the entities much better than the head does: the
 information is present, the head blocks it.
 
-## Step 5: how small can the edit be?
+## How small can the fitted change be?
 
 Pull sweep (word-level ORG F1 on held-out halves): head change 2% → 0.506, 18% → 0.533,
 46% → 0.635, 125% → 0.731. Here the gain needs a new head, not a small cut. The new head is still
@@ -38,14 +38,16 @@ only 6,921 numbers, 0.006% of the network.
 |---|---|---|---|---|---|
 | Old model | 0.479 | | 0.700 | 0.385 | 0.421 |
 | Bias baseline: MISC off | 0.501 | +0.023 [+0.021, +0.025] | 0.686 | 0.390 | 0.413 |
-| Head refit | **0.588** | **+0.109 [+0.102, +0.116]** | 0.745 | 0.489 | 0.541 |
+| Head refit (fitted control) | 0.588 | +0.109 [+0.102, +0.116] | 0.745 | 0.489 | 0.541 |
 
-The edit beats the bias baseline by a wide margin and improves every class. What is left of the gap is
-not in the head: it needs the layers below, that is, training.
+The hand edit (MISC off) is the weight-surgery result: +0.023, small and certain. The fitted head is
+fine-tuning of the head with 10,000 labelled sentences, so it is not the post's method; it shows that
+the information is in the network and that a whole new mapping is needed to use it. An earlier version
+of this page called the head refit a weight edit with no training. That was wrong.
 
 ## What did not work
 
-Small edits. With the head held within 2% of the original, nothing changed. Unlike the looping model
+Small changes. With the fitted head held within 2% of the original, nothing changed. Unlike the looping model
 in the paper, this fault is not one direction; it is the whole mapping from vectors to classes.
 
 ## Reproduce
