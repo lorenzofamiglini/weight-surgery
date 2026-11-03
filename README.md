@@ -25,6 +25,23 @@ a small probe on real inputs decides.
 
 - Post: [Sparks of Weight-Space Programming: LLMs can natively read & write neural network weights](https://rikiyat.github.io/blog/weight-space-programming/) (2026)
 
+## What this is, and what it is not
+
+The edits here are not new techniques. Removing a direction from what a matrix writes is directional
+ablation by weight orthogonalisation ([Arditi et al., 2024](https://arxiv.org/abs/2406.11717)), a
+form of steering ([Turner et al., 2023](https://arxiv.org/abs/2308.10248)). The post's loop fix is
+this kind of edit, and its attempt to raise maths ability on a model that did not loop found nothing.
+Rank-one edits to stored facts ([ROME](https://rome.baulab.info/),
+[MEMIT](https://memit.baulab.info/)), task arithmetic
+([Ilharco et al., 2023](https://arxiv.org/abs/2212.04089)) and learning on weights as data are older,
+active fields. Much of the post's evidence comes from very small networks, which a person can also
+read and edit by hand.
+
+What the skill adds is discipline, not power: weights read before inputs, a counted pass budget, no
+optimizer, an evaluation set kept unseen, a paired interval, and a fitted control next to every hand
+edit. In our runs the control wins: on the NER model above it gives +0.109 against +0.032 for the
+hand edit. Use the skill to find and explain a specific fault. Do not expect it to beat training.
+
 ## Result on a public model
 
 [`dslim/bert-base-NER`](examples/bert-ner-wikiann/), a news NER model, used on Wikipedia text (WikiANN

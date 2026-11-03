@@ -25,6 +25,8 @@ create an ability the model does not have.**
 5. Never overwrite the original weights. Write every edit to a new directory with a note.
 6. Compare against the cheap baselines (a bias change, more training data) and report failures.
    "There is nothing to remove" is a result: the post's control model ended there.
+7. Name the known technique your edit is (directional ablation, steering, a bias shift, a rank-one
+   edit) and do not report it as new. If a fitted control beats the hand edit, say so first.
 
 ## Step 1: name the failure
 
