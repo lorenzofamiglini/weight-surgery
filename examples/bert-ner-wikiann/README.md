@@ -1,68 +1,69 @@
 # Worked example: a news NER model on Wikipedia
 
 `dslim/bert-base-NER` (BERT base, 108M weights) was trained on CoNLL-2003 news. On WikiANN English it
-loses most of its accuracy. How much can an edit by hand recover, and how much is left for training?
+loses most of its accuracy. What can an edit by hand recover, following the post's rules: the weights
+first, a budget of 50 forward passes (64 sentences each), no optimizer?
 
-Search set: WikiANN validation (10,000 sentences). Evaluation set: WikiANN test (10,000 sentences),
-scored once per system at the end. Groups for the bootstrap: blocks of 20 sentences (WikiANN has no
-documents). CPU only.
+Search set: WikiANN validation. Evaluation set: WikiANN test (10,000 sentences), scored once per system
+at the end. Groups for the bootstrap: blocks of 20 sentences (WikiANN has no documents). CPU only.
 
-## Step 1: the failure (search set)
+## Step 2: the weights (no forward pass)
 
-Entity-level micro-F1 0.489. ORG recall is low (3,230 of 4,677 missed), LOC has 3,834 false positives,
-and the model predicts 1,900 MISC entities on a dataset that has no MISC class.
+- `head_geometry.py`: the head is a regular simplex. Every pair of classes sits at centred cosine
+  −1/3, all biases are about 0, all norms are equal. No class is favoured or squeezed.
+- `weight_votes.py --pair ORG,LOC` (and ORG,MISC, ORG,O): no neuron is aligned with any class
+  direction beyond chance (at most 4.4 against about 4 for 3,072 random columns). Only the embeddings
+  read clearly: *Academy*, *School*, *Army*, *College* point towards ORG.
 
-## A fitted control
+The weights alone name no fault.
 
-`probe_refit.py` (gradient steps, outside the post's method) refits only the head on half the groups and scores the other half (word level):
+## Step 1 and 3: the failure (10 passes, 640 validation sentences)
 
-| Class | Old head F1 | Refit head F1 |
-|---|---|---|
-| ORG | 0.496 | 0.731 |
-| LOC | 0.642 | 0.759 |
-| PER | 0.804 | 0.846 |
-| O | 0.886 | 0.931 |
+Of 289 gold ORG names, 98 are found exactly. 54 (19%) come out as MISC, exactly or in part: songs
+(*Bad Romance*), leagues (*Conference Premier*), shows. CoNLL calls these MISC; WikiANN calls them ORG.
+Many other errors are span conventions: WikiANN puts *Carthay , Los Angeles* and
+*Follin ( disambiguation )* in one span.
 
-The vectors that feed the head already separate the entities much better than the head does: the
-information is present, the head blocks it.
+Diagnosis: the network finds these names; its MISC rows mean ORG in WikiANN's scheme. That is a label
+mismatch, not a fault in the network.
 
-## How small can the fitted change be?
+## Step 4: the edit
 
-Pull sweep (word-level ORG F1 on held-out halves): head change 2% → 0.506, 18% → 0.533,
-46% → 0.635, 125% → 0.731. Here the gain needs a new head, not a small cut. The new head is still
-only 6,921 numbers, 0.006% of the network.
+`relabel.py` gives the two MISC rows of the head the ORG label. No number changes. Checked against
+MISC off (a large negative bias on the MISC rows) on 640 other validation sentences (10 more passes,
+20 of 50 used): micro-F1 0.480 → 0.503 (MISC off) and 0.513 (MISC labelled ORG).
 
-## Step 6: evaluation (test split, once)
+## Step 5: evaluation (test split, once)
 
-| System | Micro-F1 | Δ vs old [95% CI] | PER | ORG | LOC |
+| System | Micro-F1 | Δ vs original [95% CI] | PER | ORG | LOC |
 |---|---|---|---|---|---|
-| Old model | 0.479 | | 0.700 | 0.385 | 0.421 |
-| Bias baseline: MISC off | 0.501 | +0.023 [+0.021, +0.025] | 0.686 | 0.390 | 0.413 |
-| Head refit (fitted control) | 0.588 | +0.109 [+0.102, +0.116] | 0.745 | 0.489 | 0.541 |
+| Original | 0.479 | | 0.700 | 0.385 | 0.421 |
+| MISC off (bias edit) | 0.501 | +0.023 [+0.021, +0.025] | 0.686 | 0.390 | 0.413 |
+| **MISC rows labelled ORG** | **0.510** | **+0.032 [+0.029, +0.034]** | 0.700 | 0.410 | 0.421 |
 
-The hand edit (MISC off) is the weight-surgery result: +0.023, small and certain. The fitted head is
-fine-tuning of the head with 10,000 labelled sentences, so it is not the post's method; it shows that
-the information is in the network and that a whole new mapping is needed to use it. An earlier version
-of this page called the head refit a weight edit with no training. That was wrong.
+The relabelled head beats MISC off by +0.009 [+0.006, +0.012], and PER and LOC do not move.
 
-## What did not work
+## What did not work, and the fitted control
 
-Small changes. With the fitted head held within 2% of the original, nothing changed. Unlike the looping model
-in the paper, this fault is not one direction; it is the whole mapping from vectors to classes.
+The span conventions are not in the weights and no edit can teach them. A fitted control shows how
+much is left: `probe_refit.py` refits the head with gradient steps on 10,000 labelled sentences and
+reaches 0.588 (+0.109 [+0.102, +0.116]). That is fine-tuning of the head, not the post's method. An
+earlier version of this page called it a weight edit with no training. That was wrong.
 
 ## Reproduce
 
 ```bash
 uv sync --extra examples
 cd examples/bert-ner-wikiann
-uv run python evaluate.py "$(uv run python -c 'from data import model; print(model())')" validation old-val.jsonl
-uv run python collect.py validation features.pt
-uv run python ../../weight-surgery/scripts/probe_refit.py features.pt model
-uv run python ../../weight-surgery/scripts/probe_refit.py features.pt model --write refit
+uv run python -c 'from data import model; model()'
+uv run python ../../weight-surgery/scripts/head_geometry.py model
+uv run python ../../weight-surgery/scripts/weight_votes.py model --pair ORG,MISC --embedding bert.embeddings.word_embeddings.weight
+uv run python relabel.py model relabelled
 uv run python evaluate.py model test old.jsonl
 uv run python evaluate.py model test nomisc.jsonl --drop MISC
-uv run python evaluate.py refit test refit.jsonl
-uv run python ../../weight-surgery/scripts/paired_bootstrap.py old.jsonl refit.jsonl
+uv run python evaluate.py relabelled test relabelled.jsonl
+uv run python ../../weight-surgery/scripts/paired_bootstrap.py old.jsonl relabelled.jsonl
 ```
 
-About 30 minutes on a laptop CPU.
+The fitted control: `collect.py validation features.pt`, then
+`probe_refit.py features.pt model --write refit`, then `evaluate.py refit test refit.jsonl`.
