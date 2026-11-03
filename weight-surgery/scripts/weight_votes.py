@@ -2,8 +2,9 @@
 
 The head reads the direction d = mean of A's tag rows - mean of B's rows (times the final norm's gain,
 with --norm). Every matrix that writes into the residual stream has one column per neuron (or channel);
-d^T W gives each column's vote: positive pushes towards A, negative towards B. With --embedding, the
-same for every token of the vocabulary. Exact for pre-norm residual models up to the final norm's
+d^T W gives each column's vote: positive pushes towards A, negative towards B. Votes are shown as the
+cosine of the column with d, in units of a random direction's (1/sqrt(d)): a column at 1 is noise, a
+column above about 4 is aligned beyond chance. With --embedding, the same for every vocabulary token. Exact for pre-norm residual models up to the final norm's
 per-token scale; for post-norm models (BERT) the later norms bend it, so treat it as a ranking.
 
 Run: python weight_votes.py MODEL_DIR --pair A,B [--norm NAME] [--writers REGEX] [--embedding NAME]
@@ -63,21 +64,23 @@ def main() -> None:
     for values in shards(options.model).values():
         for name, W in values.items():
             if re.search(options.writers, name) and W.dim() == 2 and W.shape[0] == len(d):
-                votes = d @ W.float()
-                found.append((votes.norm().item() / W.float().norm().item(), name, votes))
-    print(f"direction {a} - {b}, {len(found)} writing matrices, sorted by how much of each points along it\n")
-    print(f"{'tensor':56}{'share':>8}   top columns towards {a} | towards {b}")
-    for share, name, votes in sorted(found, reverse=True, key=lambda f: f[0]):
+                W = W.float()
+                votes = (d @ W) / W.norm(dim=0).clamp_min(1e-12) * len(d) ** 0.5
+                found.append((votes.abs().max().item(), name, votes))
+    print(f"direction {a} - {b}, {len(found)} writing matrices; column cosine with it in units of a random direction\n")
+    print(f"{'tensor':56}{'max':>6}   top columns towards {a} | towards {b}")
+    for peak, name, votes in sorted(found, reverse=True, key=lambda f: f[0]):
         up, down = votes.topk(options.top // 2), (-votes).topk(options.top // 2)
-        cells = " ".join(f"{i}:{v:+.2f}" for v, i in zip(up.values.tolist(), up.indices.tolist()))
-        cells += " | " + " ".join(f"{i}:{-v:+.2f}" for v, i in zip(down.values.tolist(), down.indices.tolist()))
-        print(f"{name:56}{share:8.4f}   {cells}")
+        cells = " ".join(f"{i}:{v:+.1f}" for v, i in zip(up.values.tolist(), up.indices.tolist()))
+        cells += " | " + " ".join(f"{i}:{-v:+.1f}" for v, i in zip(down.values.tolist(), down.indices.tolist()))
+        print(f"{name:56}{peak:6.1f}   {cells}")
     if options.embedding:
-        scores = tensor(options.model, options.embedding).float() @ d
+        E = tensor(options.model, options.embedding).float()
+        scores = E @ d / E.norm(dim=1).clamp_min(1e-12) * len(d) ** 0.5
         words = vocabulary(options.model)
         for label, picked in ((a, scores.topk(options.top * 2)), (b, (-scores).topk(options.top * 2))):
             print(f"\ntokens whose embedding points towards {label}: "
-                  + ", ".join(repr(words.get(i, i)) for i in picked.indices.tolist()))
+                  + ", ".join(f"{words.get(i, i)!r} {abs(v):.1f}" for v, i in zip(picked.values.tolist(), picked.indices.tolist())))
 
 
 if __name__ == "__main__":

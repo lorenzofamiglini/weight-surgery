@@ -40,7 +40,11 @@ search set. A rate (93% of answers hit the token limit; 37% of label A predicted
 - `scripts/weight_votes.py MODEL_DIR --pair A,B [--norm FINAL_NORM] [--embedding NAME]` — push the
   head's A-against-B direction back through every matrix that writes into the residual stream. Each
   neuron gets a vote for A or for B; each matrix gets the share of its weight along the direction;
-  each vocabulary token gets a score. This names the neurons and layers to suspect.
+  each vocabulary token gets a score, in units of a random direction. The largest of n random columns
+  reaches about `sqrt(2 ln n)` (about 4 for 4,096 columns), so only values clearly above that mean
+  anything. In a large pretrained model with a new head, every matrix often sits at chance: the
+  classes are not stored one per neuron. Then find the direction with passes first (Step 3), as the
+  post did for the looping model, and come back to read which matrices write it.
 - Products of matrices answer questions about circuits without running the model (the post found
   copying heads this way): for a head, `W_O W_V` says what it writes for what it reads, and
   `W_Q^T W_K` what it looks for.
@@ -54,6 +58,11 @@ Spend the budget on inputs that split the hypothesis: minimal pairs you write (*
 against *the surgery on 3 May*), and failing and passing examples from the search set.
 
 - Check that the suspect neurons fire on the failures and not on the passes.
+- Compare failing with passing examples of the same class, layer by layer: where do the failures sit
+  between the two class means? A failure that was like the passes at a middle layer and lost it later
+  was blocked (worth an edit); a failure that is halfway from the first layers on is ambiguous to the
+  network (data or training). Also remove the plain class direction from the failure direction and
+  look at what is left: a feature only the failures carry is a candidate, if the head reads it.
 - `scripts/find_direction.py FEATURES.pt` gives the difference of the class means of failing and
   passing vectors (a measurement, not a fit) and its held-out AUC. Run it per layer: the layer where
   AUC jumps writes the behaviour. AUC near 0.5 everywhere means no single direction: do not ablate.
